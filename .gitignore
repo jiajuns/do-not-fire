@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+results/
+*.log
+*.zip
+*.pth
+model/
+_*_backup/
+_owdata/
+_pro6000_pull/
+.DS_Store

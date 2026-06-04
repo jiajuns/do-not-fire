@@ -1,0 +1,10 @@
+MIT License
+
+Copyright (c) 2026 SenseLabRobo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction... [standard MIT terms].
+
+The frozen exploration policy this layer runs on derives from a public upstream
+project and retains its original license; see that project for its terms.
