@@ -6,6 +6,37 @@
 de-synchronised broadcasting should reduce team travel and sensing overlap versus synchronised, on the
 frozen explorer, over a real WiFi channel.
 
+## 0. REVISION CHECKLIST — repeat trials required for the Sensors major revision (2026-07)
+
+The reviewers require **task-level evidence on hardware**: repeated paired trials measuring travel and
+sensing overlap, not only communication staleness. Sections 1–5 below apply unchanged; this checklist
+marks what the existing protocol already covers `[x]` and what is **new or must be fixed** `[ ]`:
+
+- [x] Conditions: synchronised vs even-staggered, `mode:=periodic interval:=T` (Section 2)
+- [x] Record per trial: per-robot odometry (travel), occupancy maps / explored cells (coverage,
+      overlap), broadcast + receive events with bytes (`comm_stats`, `/svoi/state`), WiFi stats,
+      coverage-over-time, top-down video (Section 4 table)
+- [x] Same arena, paired start layout, run to a coverage target or time cap (Section 3)
+- [ ] **At least 5 paired trials** (the previous session produced a single pair; 5 is the minimum
+      for a paired Wilcoxon test, 8 or more preferred)
+- [ ] **Fix robot1's bag recording before the session**: in BOTH previous runs its bag contained no
+      `/Odometry` or `/odom` (only costmap/rosout topics). Add its odometry topic to the record list
+      and verify with a 10-second smoke recording + `ros2 bag info`
+- [ ] **Verify all four robots actually move in every trial**: in the previous synchronised run
+      robot3 travelled 0.26 m in total (effectively stationary). In the first 30 s of each trial,
+      check every robot has a goal and is moving; otherwise abort and redo that trial
+- [ ] Keep `T = 4 s` (matches the published demonstration); synchronised = common phase,
+      staggered = offsets `{0, 1, 2, 3}` s for robots 0–3
+- [ ] Alternate the condition order (sync, desync, desync, sync, ...) to cancel battery and scene
+      drift across the session
+- [ ] One run-ID directory per trial (`sync_<stamp>` / `desync_<stamp>`) and a note of which two
+      runs form a pair
+- [ ] Optional: log the battery level at the start of each trial (useful covariate)
+
+**What happens with the data:** parsed offline with `code/parse_real_bags.py` (no ROS installation
+needed); per-trial travel from odometry, coverage/overlap from the maps, staleness from the public
+bag; a paired Wilcoxon over the trials then goes into the paper's hardware section.
+
 ## 1. Hardware
 4 wheeled robots; each with: an onboard computer, a Livox Mid-360 LiDAR with FAST-LIO2 for
 odometry/mapping, ROS 2 (Humble) + Nav2, and WiFi (one shared network). Optional: motion-capture or a
