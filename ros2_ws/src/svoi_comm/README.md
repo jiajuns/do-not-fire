@@ -44,6 +44,30 @@ ros2 run svoi_comm comm_node --ros-args -p robot_id:=0 -p n_agents:=4 \
 Modes (match the paper): `periodic` (synchronised baseline) · `spiking` (LIF de-sync) ·
 `evtrig` (distance-triggered) · `random`.
 
+## Gate the map path used by the real planner
+
+`comm_node` is useful for state/AoI measurements, but it does not by itself alter the
+existing UDP map/TF uploader. For the task-level sync/desync experiment, run
+`map_gate_node` on the same `ROS_DOMAIN_ID` as SLAM. It caches `/map` and publishes
+`/svoi/gated_map` at a common 4 s period. Remap `robot_communication`'s `map` input to
+that output and gate its continuous TF stream using
+`integration/robot_communication_map_gate.patch`. See `integration/SENSEBETTLE.md`
+for the pinned recursive upstream baseline and vehicle inventory.
+
+All robots must receive one common future wall-clock timestamp. At a 4 s period,
+sync uses phase `0` on every robot; desync uses phases `0, 1, 2, 3` seconds:
+
+```bash
+export ROS_DOMAIN_ID=2
+ros2 launch svoi_comm map_gate.launch.py robot_id:=1 period_sec:=4 \
+  phase_sec:=1 start_time:=1784090000.0
+```
+
+Use `scripts/start_map_gate.sh` to calculate the balanced phase,
+`scripts/record_trial.sh` for each vehicle bag, and `scripts/record_server_trial.sh`
+for merged maps/frontiers/goals. `scripts/capture_wifi.sh` records actual UDP/TCP wire
+traffic. The gate event byte count alone is only the ROS-serialized map size.
+
 ## Key adaptation for the 4m×6m arena (IMPORTANT)
 Full Livox range sees the whole room at once → exploration is trivial. Cap the **effective
 sensor range to ~1.0–1.5 m** in `occupancy_projector` and scale the policy's spatial params

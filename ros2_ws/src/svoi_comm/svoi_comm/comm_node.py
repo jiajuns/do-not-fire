@@ -16,8 +16,10 @@ Topics (all remappable via params):
 State vector layout (Float32MultiArray.data): [robot_id, x, y, yaw, e0..e_{D-1}]
 """
 import math
+import os
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32MultiArray
 
@@ -36,26 +38,35 @@ class CommNode(Node):
         self.n_agents = p("n_agents", 4).value
         self.emb_dim = p("emb_dim", 64).value
         self.rate_hz = float(p("rate_hz", 5.0).value)
+        self.start_time = float(p("start_time", 0.0).value)
         mode = p("mode", "spiking").value
         self.gate = EventTriggeredGate(
             mode=mode, threshold=float(p("threshold", 1.0).value),
             leak=float(p("leak", 1.0).value), refractory=int(p("refractory", 0).value),
-            interval=int(p("interval", 1).value), random_prob=float(p("random_prob", 0.2).value),
+            interval=int(p("interval", 1).value),
+            phase_offset=int(p("phase_offset", 0).value),
+            random_prob=float(p("random_prob", 0.2).value),
             evtrig_delta=float(p("evtrig_delta", 0.3).value), seed=int(self.robot_id),
         )
         odom_topic = p("odom_topic", "/Odometry").value
         emb_topic = p("embedding_topic", "embedding").value
         self.state_topic = p("state_topic", "/svoi/state").value
+        self.pose_file = p("pose_file", "").value
 
         self.pose = None            # (x, y, yaw)
+        self.pose_file_mtime = 0.0
         self.emb = None             # latest embedding (list)
         self.last_sent_emb = None
         self.last_sent_pose = None
         self.tick = 0
+        self.next_step = 0
         self.bytes_sent = 0
         self.neighbors = {}         # robot_id -> (stamp_sec, [x,y,yaw,emb...])
 
-        self.create_subscription(Odometry, odom_topic, self._odom_cb, 10)
+        if self.pose_file:
+            self.get_logger().info(f"Reading pose from file: {self.pose_file}")
+        else:
+            self.create_subscription(Odometry, odom_topic, self._odom_cb, qos_profile_sensor_data)
         self.create_subscription(Float32MultiArray, emb_topic, self._emb_cb, 10)
         self.create_subscription(Float32MultiArray, self.state_topic, self._state_cb, 50)
         self.pub_state = self.create_publisher(Float32MultiArray, self.state_topic, 50)
@@ -64,7 +75,9 @@ class CommNode(Node):
         self.create_timer(1.0 / self.rate_hz, self._tick)
         self.get_logger().info(
             f"SVoI comm_node robot {self.robot_id}/{self.n_agents} mode={mode} "
-            f"rate={self.rate_hz}Hz odom={odom_topic} state={self.state_topic}")
+            f"rate={self.rate_hz}Hz interval={self.gate.interval} "
+            f"phase_offset={self.gate.phase_offset} start_time={self.start_time:.3f} "
+            f"odom={odom_topic} state={self.state_topic}")
 
     def _odom_cb(self, msg):
         pos = msg.pose.pose.position
@@ -95,10 +108,14 @@ class CommNode(Node):
         return math.hypot(dx, dy)
 
     def _tick(self):
+        self._load_pose_file()
         if self.pose is None:
             return
-        fire = self.gate.should_fire(self.tick, self._signal())
-        self.tick += 1
+        step_idx = self._current_step()
+        if step_idx is None:
+            return
+        fire = self.gate.should_fire(step_idx, self._signal())
+        self.tick = step_idx + 1
         if fire:
             data = [float(self.robot_id), float(self.pose[0]), float(self.pose[1]), float(self.pose[2])]
             data += list(self.emb) if self.emb is not None else [0.0] * self.emb_dim
@@ -111,6 +128,20 @@ class CommNode(Node):
         st.data = [self.gate.fire_rate, float(self.bytes_sent), float(self.gate.fire_count), float(self.tick)]
         self.pub_stats.publish(st)
 
+    def _current_step(self):
+        if self.start_time <= 0.0:
+            step_idx = self.next_step
+            self.next_step += 1
+            return step_idx
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now < self.start_time:
+            return None
+        step_idx = int((now - self.start_time) * self.rate_hz)
+        if step_idx < self.next_step:
+            return None
+        self.next_step = step_idx + 1
+        return step_idx
+
     def _publish_team(self):
         """Flatten neighbour last-known states for the planner: [n, (id,x,y,yaw,staleness)...]."""
         now = self.get_clock().now().nanoseconds * 1e-9
@@ -119,6 +150,24 @@ class CommNode(Node):
             out += [float(rid), float(vec[0]), float(vec[1]), float(vec[2]), float(now - stamp)]
         msg = Float32MultiArray(); msg.data = out
         self.pub_team.publish(msg)
+
+    def _load_pose_file(self):
+        if not self.pose_file:
+            return
+        try:
+            st = os.stat(self.pose_file)
+            if st.st_mtime <= self.pose_file_mtime:
+                return
+            with open(self.pose_file, "r", encoding="utf-8") as f:
+                parts = f.read().strip().split()
+            if len(parts) < 3:
+                return
+            self.pose = (float(parts[0]), float(parts[1]), float(parts[2]))
+            self.pose_file_mtime = st.st_mtime
+        except OSError:
+            return
+        except ValueError:
+            self.get_logger().warn(f"Invalid pose file contents: {self.pose_file}")
 
 
 def main():

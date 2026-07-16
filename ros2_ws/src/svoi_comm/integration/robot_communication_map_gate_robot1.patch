@@ -1,0 +1,81 @@
+diff --git a/src/communication/include/robot_communication/robot_communication.hpp b/src/communication/include/robot_communication/robot_communication.hpp
+--- a/src/communication/include/robot_communication/robot_communication.hpp
++++ b/src/communication/include/robot_communication/robot_communication.hpp
+@@ -33,6 +33,7 @@
+ #include "sensor_msgs/msg/point_cloud2.hpp"
+ #include "std_msgs/msg/int8.hpp"
+ #include "std_msgs/msg/empty.hpp"
++#include "std_msgs/msg/bool.hpp"
+ #include "tf2/transform_datatypes.h"
+ #include "tf2_eigen/tf2_eigen.hpp"
+ #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+@@ -131,6 +132,9 @@ class RobotCommunicationNode : public rclcpp::Node {
+ 
+   // 重置订阅
+   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr reset_sub_;
++  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr svoi_fire_sub_;
++  std::atomic<uint64_t> svoi_fire_generation_{0};
++  uint64_t last_svoi_tf_generation_ = 0;
+   void ResetCallback(const std_msgs::msg::Empty::ConstSharedPtr msg);
+ 
+   rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SharedPtr nav2_client_;
+diff --git a/src/communication/launch/robot_communication.launch.py b/src/communication/launch/robot_communication.launch.py
+--- a/src/communication/launch/robot_communication.launch.py
++++ b/src/communication/launch/robot_communication.launch.py
+@@ -63,6 +63,9 @@ def generate_launch_description():
+                 "config",
+                 "robot_communication_params.yaml",
+             ),
+         ],
++        remappings=[
++            ("map_postprocessed", "/svoi/gated_map"),
++        ],
+     )
+ 
+     offsetList_str = list(
+diff --git a/src/communication/package.xml b/src/communication/package.xml
+--- a/src/communication/package.xml
++++ b/src/communication/package.xml
+@@ -22,6 +22,7 @@
+   <depend>pcl_ros</depend>
+   <depend>pcl_conversions</depend>
+   <depend>geometry_msgs</depend>
++  <depend>std_msgs</depend>
+   <depend>communication_simulation</depend>
+ 
+   <test_depend>ament_lint_auto</test_depend>
+diff --git a/src/communication/src/robot_communication.cpp b/src/communication/src/robot_communication.cpp
+--- a/src/communication/src/robot_communication.cpp
++++ b/src/communication/src/robot_communication.cpp
+@@ -164,6 +164,16 @@ RobotCommunicationNode::RobotCommunicationNode(
+     "reset", 10,
+     std::bind(&RobotCommunicationNode::ResetCallback, this, std::placeholders::_1));
+ 
++  // Experiment-only gate pulse. Map input is remapped to /svoi/gated_map;
++  // this pulse applies the same schedule to the otherwise continuous TF stream.
++  svoi_fire_sub_ = this->create_subscription<std_msgs::msg::Bool>(
++    "/svoi/fire", 10,
++    [this](const std_msgs::msg::Bool::ConstSharedPtr msg) {
++      if (msg->data) {
++        svoi_fire_generation_.fetch_add(1, std::memory_order_relaxed);
++      }
++    });
++
+   this->nav2_client_ = rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+     this,
+     "navigate_to_pose");
+@@ -833,6 +843,14 @@ void RobotCommunicationNode::TFUpdateThread() {
+       break;
+     }
+ 
++    // Send one current TF snapshot per map-gate event; discard the 10 Hz
++    // intermediate states so sync/desync differ only in their configured phase.
++    const uint64_t generation = svoi_fire_generation_.load(std::memory_order_relaxed);
++    if (generation == 0 || generation == last_svoi_tf_generation_) {
++      continue;
++    }
++    last_svoi_tf_generation_ = generation;
++
+     try {
+       // 1. 查询 odom -> base_link 变换
+       geometry_msgs::msg::TransformStamped odom_to_base_transform =
