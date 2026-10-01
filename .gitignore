@@ -10,3 +10,11 @@ _owdata/
 _pro6000_pull/
 .DS_Store
 SenseBettle/
+
+# ROS workspace build artifacts
+cure_fix_ws/build/
+cure_fix_ws/install/
+cure_fix_ws/log/
+
+# Experiment runtime state
+experiment_run/.run/

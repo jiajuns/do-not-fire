@@ -1,0 +1,13 @@
+# Reliable Communication Server Configuration
+
+reliable_communication_server:
+  ros__parameters:
+    robot_count: 3
+    tcp_port: 12140
+    listen_localhost: true   # 是否监听 127.0.0.1（本地回环，用于本机测试）
+    listen_lan: false        # 是否监听 192.168.*.* （局域网，用于多机通信）
+    # Phase-1 contract note:
+    # - server-side QoS monitoring publishes canonical per-robot CommunicationQoS on
+    #   /robot_{id}/communication_state
+    # - Lite/Habitat-side communication semantics should align to the same field meanings
+    #   (latency_ms / packet_loss_percent / bandwidth_mbps / connection_status)
